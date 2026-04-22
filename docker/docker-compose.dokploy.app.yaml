@@ -1,0 +1,313 @@
+version: '3.9'
+
+# A rede evo_network é criada pelo stack de Infra.
+# Este stack a referencia como externa para se comunicar com postgres, redis e mailhog.
+networks:
+  evo_network:
+    name: evo_network
+    external: true
+
+services:
+  # ---------------------------------------------------------------------------
+  # Auth Service (Ruby / Rails) — Port 3001
+  # Exposto externamente: o browser acessa via VITE_AUTH_API_URL
+  # Executa db:prepare + db:seed na inicialização (idempotente)
+  # AUTH_EXTERNAL_PORT: defina no Dokploy para evitar conflitos com outras stacks.
+  # ---------------------------------------------------------------------------
+  evo-auth:
+    build:
+      context: ../evo-auth-service-community
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${AUTH_EXTERNAL_PORT}:3001"
+    environment:
+      RAILS_ENV: ${RAILS_ENV}
+      RAILS_MAX_THREADS: ${RAILS_MAX_THREADS}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      DOORKEEPER_JWT_SECRET_KEY: ${DOORKEEPER_JWT_SECRET_KEY}
+      DOORKEEPER_JWT_ALGORITHM: ${DOORKEEPER_JWT_ALGORITHM}
+      DOORKEEPER_JWT_ISS: ${DOORKEEPER_JWT_ISS}
+      DOORKEEPER_JWT_AUD: ${DOORKEEPER_JWT_AUD}
+      MFA_ISSUER: ${MFA_ISSUER}
+      FRONTEND_URL: ${FRONTEND_URL}
+      MAILER_SENDER_EMAIL: ${MAILER_SENDER_EMAIL}
+      SMTP_ADDRESS: ${SMTP_ADDRESS}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_DOMAIN: ${SMTP_DOMAIN}
+      SMTP_AUTHENTICATION: ${SMTP_AUTHENTICATION}
+      SMTP_ENABLE_STARTTLS_AUTO: ${SMTP_ENABLE_STARTTLS_AUTO}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      EVOAI_CRM_API_TOKEN: ${EVOAI_CRM_API_TOKEN}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+    depends_on:
+      - postgres
+      - redis
+    command: bash -c "bundle exec rails db:prepare && bundle exec rails db:seed && bundle exec rails s -p 3001 -b 0.0.0.0"
+    networks:
+      - evo_network
+
+  # ---------------------------------------------------------------------------
+  # Auth Sidekiq — sem porta exposta (processo interno)
+  # ---------------------------------------------------------------------------
+  evo-auth-sidekiq:
+    build:
+      context: ../evo-auth-service-community
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      RAILS_ENV: ${RAILS_ENV}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      EVOAI_CRM_API_TOKEN: ${EVOAI_CRM_API_TOKEN}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+    depends_on:
+      - postgres
+      - redis
+    command: bash -c "bundle exec sidekiq"
+    networks:
+      - evo_network
+
+  # ---------------------------------------------------------------------------
+  # CRM Service (Ruby / Rails) — Port 3000
+  # Exposto externamente: o browser acessa via VITE_API_URL
+  # Executa db:prepare + db:seed na inicialização (idempotente)
+  # CRM_EXTERNAL_PORT: defina no Dokploy para evitar conflitos com outras stacks.
+  # ---------------------------------------------------------------------------
+  evo-crm:
+    build:
+      context: ../evo-ai-crm-community
+      dockerfile: docker/Dockerfile
+      args:
+        BUNDLE_WITHOUT: ""
+        RAILS_ENV: ${RAILS_ENV}
+        RAILS_SERVE_STATIC_FILES: "true"
+    restart: unless-stopped
+    ports:
+      - "${CRM_EXTERNAL_PORT}:3000"
+    environment:
+      RAILS_ENV: ${RAILS_ENV}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      RAILS_LOG_TO_STDOUT: ${RAILS_LOG_TO_STDOUT}
+      LOG_LEVEL: ${LOG_LEVEL}
+      BACKEND_URL: ${BACKEND_URL}
+      FRONTEND_URL: ${FRONTEND_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      MAILER_SENDER_EMAIL: ${MAILER_SENDER_EMAIL}
+      SMTP_ADDRESS: ${SMTP_ADDRESS}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_DOMAIN: ${SMTP_DOMAIN}
+      SMTP_AUTHENTICATION: ${SMTP_AUTHENTICATION}
+      SMTP_ENABLE_STARTTLS_AUTO: ${SMTP_ENABLE_STARTTLS_AUTO}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      EVOAI_CRM_API_TOKEN: ${EVOAI_CRM_API_TOKEN}
+      ENABLE_ACCOUNT_SIGNUP: ${ENABLE_ACCOUNT_SIGNUP}
+      DISABLE_TELEMETRY: ${DISABLE_TELEMETRY}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      EVO_AUTH_SERVICE_URL: http://evo-auth:3001
+      EVO_AI_CORE_SERVICE_URL: http://evo-core:5555
+      BOT_RUNTIME_URL: http://evo-bot-runtime:8080
+      BOT_RUNTIME_SECRET: ${BOT_RUNTIME_SECRET}
+      BOT_RUNTIME_POSTBACK_BASE_URL: http://evo-crm:3000
+    volumes:
+      - crm_bundle:/usr/local/bundle
+      - crm_node_modules:/app/node_modules
+      - crm_cache:/app/tmp/cache
+    depends_on:
+      - postgres
+      - redis
+      - evo-auth
+    entrypoint: docker/entrypoints/rails.sh
+    command: ["sh", "-c", "bundle exec rails db:prepare && bundle exec rails db:seed && bundle exec rails s -p 3000 -b 0.0.0.0"]
+    networks:
+      - evo_network
+
+  # ---------------------------------------------------------------------------
+  # CRM Sidekiq — sem porta exposta (processo interno)
+  # ---------------------------------------------------------------------------
+  evo-crm-sidekiq:
+    build:
+      context: ../evo-ai-crm-community
+      dockerfile: docker/Dockerfile
+      args:
+        BUNDLE_WITHOUT: ""
+        RAILS_ENV: ${RAILS_ENV}
+        RAILS_SERVE_STATIC_FILES: "true"
+    restart: unless-stopped
+    environment:
+      RAILS_ENV: ${RAILS_ENV}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      EVOAI_CRM_API_TOKEN: ${EVOAI_CRM_API_TOKEN}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      EVO_AUTH_SERVICE_URL: http://evo-auth:3001
+      EVO_AI_CORE_SERVICE_URL: http://evo-core:5555
+      BOT_RUNTIME_URL: http://evo-bot-runtime:8080
+      BOT_RUNTIME_SECRET: ${BOT_RUNTIME_SECRET}
+      BOT_RUNTIME_POSTBACK_BASE_URL: http://evo-crm:3000
+    volumes:
+      - crm_bundle:/usr/local/bundle
+      - crm_node_modules:/app/node_modules
+      - crm_cache:/app/tmp/cache
+    depends_on:
+      - postgres
+      - redis
+    entrypoint: docker/entrypoints/rails.sh
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    networks:
+      - evo_network
+
+  # ---------------------------------------------------------------------------
+  # Core Service (Go / Gin) — Port 5555
+  # Exposto externamente: o browser acessa via VITE_EVOAI_API_URL
+  # CORE_EXTERNAL_PORT: defina no Dokploy para evitar conflitos com outras stacks.
+  # ---------------------------------------------------------------------------
+  evo-core:
+    build:
+      context: ../evo-ai-core-service-community
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${CORE_EXTERNAL_PORT}:5555"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USERNAME}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DATABASE}
+      DB_SSLMODE: ${DB_SSLMODE}
+      DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS}
+      DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS}
+      DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME}
+      DB_CONN_MAX_IDLE_TIME: ${DB_CONN_MAX_IDLE_TIME}
+      PORT: "5555"
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      EVOLUTION_BASE_URL: http://evo-crm:3000
+      EVO_AUTH_BASE_URL: http://evo-auth:3001
+      AI_PROCESSOR_URL: http://evo-processor:8000
+      AI_PROCESSOR_VERSION: ${AI_PROCESSOR_VERSION}
+    depends_on:
+      - postgres
+    networks:
+      - evo_network
+
+  # ---------------------------------------------------------------------------
+  # Processor Service (Python / FastAPI) — Port 8000
+  # Exposto externamente: o browser acessa via VITE_AGENT_PROCESSOR_URL
+  # PROCESSOR_EXTERNAL_PORT: defina no Dokploy para evitar conflitos com outras stacks.
+  # ---------------------------------------------------------------------------
+  evo-processor:
+    build:
+      context: ../evo-ai-processor-community
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${PROCESSOR_EXTERNAL_PORT}:8000"
+    environment:
+      POSTGRES_CONNECTION_STRING: postgresql://${POSTGRES_USERNAME}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DATABASE}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_DB: ${REDIS_DB}
+      REDIS_SSL: ${REDIS_SSL}
+      REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX}
+      REDIS_TTL: ${REDIS_TTL}
+      HOST: 0.0.0.0
+      PORT: "8000"
+      DEBUG: ${DEBUG}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      EVOAI_CRM_API_TOKEN: ${EVOAI_CRM_API_TOKEN}
+      EVO_AI_CRM_URL: http://evo-crm:3000
+      CORE_SERVICE_URL: http://evo-core:5555/api/v1
+      TOOLS_CACHE_ENABLED: ${TOOLS_CACHE_ENABLED}
+      TOOLS_CACHE_TTL: ${TOOLS_CACHE_TTL}
+    volumes:
+      - processor_logs:/app/logs
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - evo_network
+
+  # ---------------------------------------------------------------------------
+  # Bot Runtime (Go / Gin) — sem porta exposta
+  # Apenas o CRM chama internamente (BOT_RUNTIME_URL)
+  # ---------------------------------------------------------------------------
+  evo-bot-runtime:
+    build:
+      context: ../evo-bot-runtime
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      LISTEN_ADDR: 0.0.0.0:8080
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      AI_PROCESSOR_URL: http://evo-processor:8000
+      BOT_RUNTIME_SECRET: ${BOT_RUNTIME_SECRET}
+      AI_PROCESSOR_API_KEY: ${AI_PROCESSOR_API_KEY}
+      AI_CALL_TIMEOUT_SECONDS: ${AI_CALL_TIMEOUT_SECONDS}
+    depends_on:
+      - redis
+      - evo-processor
+    networks:
+      - evo_network
+
+  # ---------------------------------------------------------------------------
+  # Frontend (React / Vite / Nginx) — Port 5173
+  # VITE_* são BUILD ARGs: devem ser as URLs públicas acessadas pelo browser
+  # FRONTEND_EXTERNAL_PORT: defina no Dokploy para evitar conflitos com outras stacks.
+  # ---------------------------------------------------------------------------
+  evo-frontend:
+    build:
+      context: ../evo-ai-frontend-community
+      dockerfile: Dockerfile
+      args:
+        VITE_APP_ENV: ${VITE_APP_ENV}
+        VITE_API_URL: ${VITE_API_URL}
+        VITE_AUTH_API_URL: ${VITE_AUTH_API_URL}
+        VITE_EVOAI_API_URL: ${VITE_EVOAI_API_URL}
+        VITE_AGENT_PROCESSOR_URL: ${VITE_AGENT_PROCESSOR_URL}
+        VITE_TINYMCE_API_KEY: ${VITE_TINYMCE_API_KEY}
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: ${VITE_API_URL}
+      VITE_AUTH_API_URL: ${VITE_AUTH_API_URL}
+      VITE_WS_URL: ${VITE_WS_URL}
+      VITE_EVOAI_API_URL: ${VITE_EVOAI_API_URL}
+      VITE_AGENT_PROCESSOR_URL: ${VITE_AGENT_PROCESSOR_URL}
+    ports:
+      - "${FRONTEND_EXTERNAL_PORT}:80"
+    depends_on:
+      - evo-auth
+      - evo-crm
+    networks:
+      - evo_network
+
+volumes:
+  crm_bundle:
+  crm_node_modules:
+  crm_cache:
+  processor_logs:

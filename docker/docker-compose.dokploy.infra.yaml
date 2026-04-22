@@ -1,0 +1,57 @@
+version: '3.9'
+
+# Rede compartilhada entre o stack de infra e o stack de app.
+# O stack de app deve referenciá-la como external: true.
+networks:
+  evo_network:
+    name: evo_network
+    driver: bridge
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    # Sem porta exposta — acesso apenas pela rede interna evo_network
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${POSTGRES_DATABASE}
+      POSTGRES_USER: ${POSTGRES_USERNAME}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USERNAME:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - evo_network
+
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    command: ["sh", "-c", "redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes"]
+    # Sem porta exposta — acesso apenas pela rede interna evo_network
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - evo_network
+
+  mailhog:
+    image: mailhog/mailhog
+    restart: unless-stopped
+    # Porta SMTP (1025) é interna. Apenas a UI web é exposta.
+    # MAILHOG_EXTERNAL_PORT: defina no Dokploy para evitar conflitos com outras stacks.
+    ports:
+      - "${MAILHOG_EXTERNAL_PORT}:8025"
+    networks:
+      - evo_network
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -47,9 +47,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DATABASE: ${POSTGRES_DATABASE}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
-    depends_on:
-      - postgres
-      - redis
+    # postgres e redis estão no stack de infra separado — sem depends_on cross-stack.
+    # O entrypoint do Rails já aguarda o banco ficar disponível antes de prosseguir.
     command: bash -c "bundle exec rails db:prepare && bundle exec rails db:seed && bundle exec rails s -p 3001 -b 0.0.0.0"
     networks:
       - evo_network
@@ -73,9 +72,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DATABASE: ${POSTGRES_DATABASE}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
-    depends_on:
-      - postgres
-      - redis
+    # postgres e redis estão no stack de infra separado — sem depends_on cross-stack.
     command: bash -c "bundle exec sidekiq"
     networks:
       - evo_network
@@ -131,9 +128,9 @@ services:
       - crm_bundle:/usr/local/bundle
       - crm_node_modules:/app/node_modules
       - crm_cache:/app/tmp/cache
+    # postgres e redis estão no stack de infra separado — sem depends_on cross-stack.
+    # O entrypoint do Rails já aguarda o banco ficar disponível antes de prosseguir.
     depends_on:
-      - postgres
-      - redis
       - evo-auth
     entrypoint: docker/entrypoints/rails.sh
     command: ["sh", "-c", "bundle exec rails db:prepare && bundle exec rails db:seed && bundle exec rails s -p 3000 -b 0.0.0.0"]
@@ -171,9 +168,7 @@ services:
       - crm_bundle:/usr/local/bundle
       - crm_node_modules:/app/node_modules
       - crm_cache:/app/tmp/cache
-    depends_on:
-      - postgres
-      - redis
+    # postgres e redis estão no stack de infra separado — sem depends_on cross-stack.
     entrypoint: docker/entrypoints/rails.sh
     command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
     networks:
@@ -210,8 +205,7 @@ services:
       EVO_AUTH_BASE_URL: http://evo-auth:3001
       AI_PROCESSOR_URL: http://evo-processor:8000
       AI_PROCESSOR_VERSION: ${AI_PROCESSOR_VERSION}
-    depends_on:
-      - postgres
+    # postgres está no stack de infra separado — sem depends_on cross-stack.
     networks:
       - evo_network
 
@@ -247,9 +241,7 @@ services:
       TOOLS_CACHE_TTL: ${TOOLS_CACHE_TTL}
     volumes:
       - processor_logs:/app/logs
-    depends_on:
-      - postgres
-      - redis
+    # postgres e redis estão no stack de infra separado — sem depends_on cross-stack.
     networks:
       - evo_network
 
@@ -269,8 +261,8 @@ services:
       BOT_RUNTIME_SECRET: ${BOT_RUNTIME_SECRET}
       AI_PROCESSOR_API_KEY: ${AI_PROCESSOR_API_KEY}
       AI_CALL_TIMEOUT_SECONDS: ${AI_CALL_TIMEOUT_SECONDS}
+    # redis está no stack de infra separado — sem depends_on cross-stack.
     depends_on:
-      - redis
       - evo-processor
     networks:
       - evo_network

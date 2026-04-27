@@ -1,2 +1,8 @@
 .env
 _evo*
+.env.infra
+.env.app
+.env.local
+.env.development
+.env.test
+.env.production
